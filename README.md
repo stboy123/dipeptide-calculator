@@ -7,7 +7,7 @@ Công cụ phân tích sự tự lắp ghép của Dipeptide. Để chạy công
 
 Cấu trúc lệnh tổng quát:
 ```bash
-python main1.py -f <trajectory.xtc> -s <topology.tpr> -gro <structure.gro> -select "<nhóm phân tử>" -cutoff_space 0.7 -cutoff_cz 20 [CÁC CỜ PHÂN TÍCH]
+python main_nice.py -f <trajectory.xtc> -s <topology.tpr> -gro <structure.gro> -select "<nhóm phân tử>" -cutoff_space 0.7 -cutoff_cz 20 [CÁC CỜ PHÂN TÍCH]
 ```
 
 ### Các ví dụ phân tích cụ thể:
