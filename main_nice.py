@@ -31,13 +31,16 @@ def parse_arguments():
     parser.add_argument('-molnumber', type=str, default=None, help='Xuất tổng số phân tử trong cụm hợp lệ')
     parser.add_argument('-liquidity', type=str, default=None, help='Xuất độ lỏng (liquidity.xvg)')
     parser.add_argument('-density', type=str, default=None, help='Xuất mật độ (density.xvg)')
+    
+    # CÁC CỜ XUẤT PDB
     parser.add_argument('-pdb', type=str, default=None, help='Xuất cấu trúc cụm lớn nhất (.pdb)')
+    parser.add_argument('-pdb_system', type=str, default=None, help='Xuất toàn bộ hệ thống được căn giữa (.pdb)')
+    parser.add_argument('-pdb_time', type=float, default=-1, help='Thời điểm trích xuất file PDB (ps)')
     
     parser.add_argument('-cutoff_space', type=float, default=0.7, help='Khoảng cách tương tác (nm)')
     parser.add_argument('-cutoff_multi', type=float, default=2.0, help='Hệ số nhân bán kính dò mật độ (Chuẩn của Tang = 2.0)')
     parser.add_argument('-cutoff_cz', type=int, default=20, help='Số PHÂN TỬ tối thiểu để tính là 1 cụm hợp lệ')
     parser.add_argument('-n_pep', type=int, default=2, help='Số GỐC trong 1 phân tử (Mặc định 2)')
-    parser.add_argument('-pdb_time', type=float, default=-1, help='Thời điểm trích xuất file PDB (ps)')
     
     parser.add_argument('--fix-pbc', action='store_true', help='Tự động vá lỗi xé hộp (PBC whole)')
     parser.add_argument('--gmx-path', type=str, default='gmx', help='Đường dẫn đến GROMACS')
@@ -126,7 +129,6 @@ def main():
     try:
         u = mda.Universe(args.gro, final_xtc)
         
-        # Gọi hàm ép khối lượng GROMACS vào Python
         sync_masses_from_tpr(u, args.s, args.gmx_path)
         
         peptide_group = u.select_atoms(args.select)
@@ -153,6 +155,9 @@ def main():
     
     prev_cluster = set()
     prev_contacts = set()
+    
+    # Biến kiểm soát việc chụp ảnh
+    pdb_extracted = False 
 
     print("\n[+] Bắt đầu quét quỹ đạo (Quá trình tính Density sẽ khá chậm để mô phỏng C++)...")
     for ts in u.trajectory:
@@ -169,7 +174,7 @@ def main():
 
         qualified_clusters_mols = [mols for mols in all_clusters_mols if len(mols) >= args.cutoff_cz]
 
-        # 1. Đếm cụm và Tính tổng phân tử (Bị lọc bởi cutoff)
+        # 1. Đếm cụm và Tính tổng phân tử
         cluster_counts.append(len(qualified_clusters_mols))
         molnumber_data.append(sum(len(mols) for mols in qualified_clusters_mols))
 
@@ -191,7 +196,6 @@ def main():
         current_max_size = max([len(mols) for mols in all_clusters_mols]) if all_clusters_mols else 0
         max_sizes.append(current_max_size)
 
-        # BẮT CHƯỚC LỖI TANG: Biến buggy_cluster_this_frame bỏ rơi phân tử đầu tiên của mọi cụm
         buggy_cluster_this_frame = set()
         for mols in all_clusters_mols:
             mols_list = sorted(list(mols))
@@ -245,9 +249,8 @@ def main():
             prev_contacts = current_contacts
             liquidity_data.append([val0, val1, val2, val3, val4])
 
-        # 5. TÍNH TOÁN MẬT ĐỘ (BẢN CLONE HOÀN HẢO TỪ C++)
+        # 5. TÍNH TOÁN MẬT ĐỘ
         if args.density:
-            # Bước 1: Trích xuất các index của tập hợp lỗi
             agg_res_indices_den = []
             for m in buggy_cluster_this_frame:
                 for i in range(args.n_pep):
@@ -263,7 +266,6 @@ def main():
             mass_aggr = aggr_atoms.total_mass() if len(aggr_atoms) > 0 else 0.0
             mass_disp = disp_atoms.total_mass() if len(disp_atoms) > 0 else 0.0
             
-            # Bước 2: Tạo lưới y chang C++ (Mắt lưới ÉP BUỘC là 1.0 Angstrom = 0.1 nm)
             box_dims = u.dimensions[:3]
             x_grid = np.arange(0, box_dims[0], 1.0)
             y_grid = np.arange(0, box_dims[1], 1.0)
@@ -275,7 +277,6 @@ def main():
             
             radius_multi_A = args.cutoff_space * 10.0 * args.cutoff_multi
             
-            # Bước 3: Chỉ quét nhóm Ngưng tụ 
             if len(aggr_atoms) > 0:
                 wrapped_aggr = aggr_atoms.positions % box_dims
                 tree_aggr = cKDTree(wrapped_aggr, boxsize=box_dims)
@@ -284,7 +285,6 @@ def main():
             else:
                 num_aggr_points = 0
                 
-            # Bước 4: Thể tích phân tán = Phần còn lại của không gian (Logic "Else" của Tang)
             num_disp_points = total_grid_points - num_aggr_points
                 
             vol_aggr_nm3 = num_aggr_points / 1000.0
@@ -294,6 +294,46 @@ def main():
             den_disp = (mass_disp / vol_disp_nm3 / 0.602) if vol_disp_nm3 > 0 else 0.0
             
             density_data.append([den_aggr, den_disp])
+
+        # =========================================================
+        # 6. XUẤT PDB GIỐNG HỆT 100% THUẬT TOÁN CỦA TANG (ASSEMBLY.CPP)
+        # =========================================================
+        if (args.pdb or args.pdb_system) and not pdb_extracted and abs(ts.time - args.pdb_time) <= 0.1:
+            print(f"\n[+] ĐÃ BẮT ĐƯỢC KHUNG HÌNH {ts.time} ps! Đang xử lý xuất PDB...")
+            if all_clusters_mols:
+                largest_c_mols = max(all_clusters_mols, key=len)
+                agg_res_indices_pdb = []
+                for m in largest_c_mols:
+                    for i in range(args.n_pep):
+                        agg_res_indices_pdb.append(m * args.n_pep + i)
+                
+                largest_cluster_atoms = residues[agg_res_indices_pdb].atoms
+                
+                box_dims = u.dimensions[:3]
+                box_center = box_dims / 2.0
+                cluster_com = largest_cluster_atoms.center_of_geometry(pbc=True)
+                
+                # Tính độ lệch để lôi cụm lớn nhất về tâm hộp (Giống y hệt Tang)
+                shift_vector = box_center - cluster_com
+                
+                # 1. Dời toàn bộ hệ thống đi một khoảng bằng shift_vector
+                u.atoms.translate(shift_vector)
+                
+                # 2. CHẶT CÁC NGUYÊN TỬ VĂNG RA NGOÀI VÀ NHÉT LẠI VÀO HỘP
+                # Phép toán '%' (chia lấy dư) trong Python sẽ ép chính xác mọi tọa độ 
+                # lớn hơn L về (Tọa độ - L), và tọa độ nhỏ hơn 0 về (Tọa độ + L)
+                # Đây chính là khối lệnh if...else kiểm tra từng nguyên tử trong C++ của Tang.
+                u.atoms.positions = u.atoms.positions % box_dims
+                
+                if args.pdb:
+                    largest_cluster_atoms.write(args.pdb)
+                    print(f"  -> Đã xuất cụm khổng lồ nhất ({len(largest_c_mols)} phân tử) ra: {args.pdb}")
+                if args.pdb_system:
+                    peptide_group.write(args.pdb_system)
+                    print(f"  -> Đã xuất hệ thống căn giữa ra: {args.pdb_system}")
+            else:
+                print(f"  -> CẢNH BÁO: Không có cụm nào được tạo ra tại mốc {ts.time} ps!")
+            pdb_extracted = True
 
         if ts.frame % 100 == 0:
             print(f" Time: {ts.time:10.1f} ps | Cụm Hợp Lệ: {len(qualified_clusters_mols):3d} | MaxSize: {current_max_size:3d}")
