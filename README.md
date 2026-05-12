@@ -36,7 +36,10 @@ python main_nice.py -f <trajectory.xtc> -s <topology.tpr> -gro <structure.gro> -
    ```bash
    python main_nice.py -f output_reduced.xtc -s md_0_1.tpr -gro md_production.gro -select "resname GLY PHE" -cutoff_space 0.7 -cutoff_cz 20 -density density.xvg --fix-pbc
    ```
-
+6. **Xuất file cấu trúc của cụm lớn nhất (pdb):
+   ```bash
+   python main1.py -f output_reduced.xtc -s md_0_1_515.tpr -gro md_production.gro -select "resname GLY PHE" -cutoff_space 0.7 -cutoff_cz 20 -pdb_system system_python.pdb -pdb_time 2500000
+   ```
 ---
 
 ## 🛠 Giải thích các tham số (Arguments)
@@ -57,6 +60,7 @@ Sử dụng lệnh `python main_nice.py -h` để xem trợ giúp chi tiết.
 | `-liquidity` | Xuất chỉ số độ lỏng |
 | `-density` | Xuất dữ liệu mật độ |
 | `-pdb` | Xuất file cấu trúc của cụm lớn nhất (`.pdb`) |
+| `-pdb_system ` | Xuất file cấu trúc của cụm phân tử với điều kiện cutoff_cz (`.pdb`) |
 | `-cutoff_space` | Khoảng cách tương tác (nm). Mặc định thường là 0.7 |
 | `-cutoff_multi` | Hệ số nhân bán kính dò mật độ (Chuẩn của Tang = 2.0) |
 | `-cutoff_cz` | Số phân tử tối thiểu để được tính là 1 cụm hợp lệ |
