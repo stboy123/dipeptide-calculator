@@ -36,7 +36,7 @@ python main_nice.py -f <trajectory.xtc> -s <topology.tpr> -gro <structure.gro> -
    ```bash
    python main_nice.py -f output_reduced.xtc -s md_0_1.tpr -gro md_production.gro -select "resname GLY PHE" -cutoff_space 0.7 -cutoff_cz 20 -density density.xvg --fix-pbc
    ```
-6. **Xuất file cấu trúc của cụm lớn nhất (pdb):
+6. **Xuất file cấu trúc của cụm lớn nhất (pdb):**
    ```bash
    python main1.py -f output_reduced.xtc -s md_0_1_515.tpr -gro md_production.gro -select "resname GLY PHE" -cutoff_space 0.7 -cutoff_cz 20 -pdb_system system_python.pdb -pdb_time 2500000
    ```
