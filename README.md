@@ -1,72 +1,129 @@
 # Dipeptide Assembly Analyzer
-*Clone 100% Yiming Tang's Code*
+*A tool for calculating dipeptide phase separation*
 
-Công cụ phân tích sự tự lắp ghép của Dipeptide. Để chạy công cụ, bạn cần cung cấp file quỹ đạo, cấu trúc hệ thống và kích hoạt các cờ tính toán mong muốn.
+A comprehensive tool designed to analyze the phase separation and self-assembly behavior of dipeptides. To run the analyzer, you must provide a trajectory file, a system structure/topology file, and activate your desired calculation flags.
 
-## 🚀 Hướng dẫn sử dụng nhanh
+## 🚀 Quick Start Guide
 
-Cấu trúc lệnh tổng quát:
+**General Command Structure:**
 ```bash
-python main_nice.py -f <trajectory.xtc> -s <topology.tpr> -gro <structure.gro> -select "<nhóm phân tử>" -cutoff_space 0.7 -cutoff_cz 20 [CÁC CỜ PHÂN TÍCH]
+python main_nice.py -f <trajectory.xtc> -s <topology.tpr> -gro <structure.gro> -select "<molecule_group>" -cutoff_space 0.7 -cutoff_cz 20 [ANALYSIS FLAGS]
 ```
 
-### Các ví dụ phân tích cụ thể:
-
-1. **Tính số lượng cụm (Number of clusters):**
-   ```bash
-   python main_nice.py -f output_reduced.xtc -s md_0_1.tpr -gro md_production.gro -select "resname GLY PHE" -cutoff_space 0.7 -cutoff_cz 20 -nb number.xvg --fix-pbc
-   ```
-
-2. **Kích thước cụm lớn nhất theo thời gian (Size of largest cluster):**
-   ```bash
-   python main_nice.py -f output_reduced.xtc -s md_0_1.tpr -gro md_production.gro -select "resname GLY PHE" -cutoff_space 0.7 -cutoff_cz 20 -sz size.xvg --fix-pbc
-   ```
-
-3. **Số lượng phân tử nằm trong các cụm:**
-   ```bash
-   python main_nice.py -f output_reduced.xtc -s md_0_1.tpr -gro md_production.gro -select "resname GLY PHE" -cutoff_space 0.7 -cutoff_cz 20 -molnumber molecules_in_clusters.xvg --fix-pbc
-   ```
-
-4. **Tính độ lỏng (Liquidity):**
-   ```bash
-   python main_nice.py -f output_reduced.xtc -s md_0_1.tpr -gro md_production.gro -select "resname GLY PHE" -cutoff_space 0.7 -cutoff_cz 20 -liquidity liquidity_factor.xvg --fix-pbc
-   ```
-
-5. **Tính mật độ (Density):**
-   ```bash
-   python main_nice.py -f output_reduced.xtc -s md_0_1.tpr -gro md_production.gro -select "resname GLY PHE" -cutoff_space 0.7 -cutoff_cz 20 -density density.xvg --fix-pbc
-   ```
-6. **Xuất file cấu trúc của cụm lớn nhất (pdb):**
-   ```bash
-   python main1.py -f output_reduced.xtc -s md_0_1_515.tpr -gro md_production.gro -select "resname GLY PHE" -cutoff_space 0.7 -cutoff_cz 20 -pdb_system system_python.pdb -pdb_time 2500000
-   ```
 ---
 
-## 🛠 Giải thích các tham số (Arguments)
+## 💡 Analysis Examples
 
-Sử dụng lệnh `python main_nice.py -h` để xem trợ giúp chi tiết.
+To help you get started, here are specific examples grouped by the type of analysis.
 
+### 1. Basic Cluster Analysis
+* **Calculate the number of clusters:**
+  ```bash
+  python main_nice.py -f output_reduced.xtc -s md_0_1.tpr -gro md_production.gro -select "resname GLY PHE" -cutoff_space 0.7 -cutoff_cz 20 -nb number.xvg --fix-pbc
+  ```
+* **Track the size of the largest cluster over time:**
+  ```bash
+  python main_nice.py -f output_reduced.xtc -s md_0_1.tpr -gro md_production.gro -select "resname GLY PHE" -cutoff_space 0.7 -cutoff_cz 20 -sz size.xvg --fix-pbc
+  ```
+* **Count the number of molecules within clusters:**
+  ```bash
+  python main_nice.py -f output_reduced.xtc -s md_0_1.tpr -gro md_production.gro -select "resname GLY PHE" -cutoff_space 0.7 -cutoff_cz 20 -molnumber molecules_in_clusters.xvg --fix-pbc
+  ```
 
-| Tham số | Mô tả |
+### 2. Physical & Structural Properties
+* **Calculate liquidity:**
+  ```bash
+  python main_nice.py -f output_reduced.xtc -s md_0_1.tpr -gro md_production.gro -select "resname GLY PHE" -cutoff_space 0.7 -cutoff_cz 20 -liquidity liquidity_factor.xvg --fix-pbc
+  ```
+* **Calculate density:**
+  ```bash
+  python main_nice.py -f output_reduced.xtc -s md_0_1.tpr -gro md_production.gro -select "resname GLY PHE" -cutoff_space 0.7 -cutoff_cz 20 -density density.xvg --fix-pbc
+  ```
+* **Calculate Solvent Accessible Surface Area (SASA):** *(Automatically selects the "Protein" group)*
+  ```bash
+  python main_nice.py -f output_reduced.xtc -s md_0_1.tpr -gro md_production.gro -select "resname GLY PHE" -cutoff_space 0.7 -cutoff_cz 20 -sasa sasa_area.xvg --fix-pbc
+  ```
+
+### 3. Advanced Thermodynamics & Anisotropy
+* **Calculate the Degree of Clustering (DC) and Aggregation Propensity (AP):**
+  ```bash
+  python main_nice.py -f output_reduced.xtc -s md_0_1.tpr -gro md_production.gro -select "resname GLY PHE" -cutoff_space 0.7 -cutoff_cz 20 -dc degree_of_clustering.xvg -ap aggregation_propensity.xvg --fix-pbc
+  ```
+* **Calculate Orientational Order (P2) and Relative Shape Anisotropy (K2):**
+  ```bash
+  python main_nice.py -f output_reduced.xtc -s md_0_1.tpr -gro md_production.gro -select "resname GLY PHE" -cutoff_space 0.7 -cutoff_cz 20 -p2 order_parameter.xvg -k2 shape_anisotropy.xvg --fix-pbc
+  ```
+* **Calculate the Free Energy Surface (FES) at 300K:**
+  ```bash
+  python main_nice.py -f output_reduced.xtc -s md_0_1.tpr -gro md_production.gro -select "resname GLY PHE" -cutoff_space 0.7 -cutoff_cz 20 -fes fes_output.xvg -fes_temp 300 --fix-pbc
+  ```
+* **Analyze Co-assembly Composition Ratio (e.g., GF/QW):**
+  ```bash
+  python main_nice.py -f output_reduced.xtc -s md_0_1.tpr -gro md_production.gro -select "resname GLY PHE" -cutoff_space 0.7 -cutoff_cz 20 -comp composition_ratio.xvg --fix-pbc
+  ```
+
+### 4. Extracting Structural Snapshots (PDB)
+* **Export the structure file of the largest cluster at a specific time (e.g., 2500000 ps):**
+  ```bash
+  python main_nice.py -f output_reduced.xtc -s md_0_1.tpr -gro md_production.gro -select "resname GLY PHE" -cutoff_space 0.7 -cutoff_cz 20 -pdb_system system_python.pdb -pdb_time 2500000
+  ```
+
+---
+
+## 🛠 Arguments & Parameters
+
+You can use the command `python main_nice.py -h` at any time to view the detailed help menu directly in your terminal.
+
+### 1. Input & Output Files
+| Flag | Description |
 | :--- | :--- |
-| `-f` | File quỹ đạo (`.xtc`) |
-| `-s` | File cấu trúc cho GROMACS (`.tpr`) |
-| `-gro` | File cấu trúc định dạng `.gro` |
-| `-select` | Lệnh chọn phân tử (Ví dụ: `"resname GLY PHE"`) |
-| `-nb` | Xuất số lượng cụm ra file `.xvg` |
-| `-sz` | Xuất kích thước cụm lớn nhất ra file `.xvg` |
-| `-comp` | Xuất tỷ lệ Co-assembly (`composition.xvg`) |
-| `-molnumber` | Xuất tổng số phân tử nằm trong các cụm hợp lệ |
-| `-liquidity` | Xuất chỉ số độ lỏng |
-| `-density` | Xuất dữ liệu mật độ |
-| `-pdb` | Xuất file cấu trúc của cụm lớn nhất (`.pdb`) |
-| `-pdb_system ` | Xuất file cấu trúc của cụm phân tử với điều kiện cutoff_cz (`.pdb`) |
-| `-cutoff_space` | Khoảng cách tương tác (nm). Mặc định thường là 0.7 |
-| `-cutoff_multi` | Hệ số nhân bán kính dò mật độ (Chuẩn của Tang = 2.0) |
-| `-cutoff_cz` | Số phân tử tối thiểu để được tính là 1 cụm hợp lệ |
-| `-n_pep` | Số gốc (residues) trong 1 phân tử (Mặc định: 2) |
-| `-pdb_time` | Thời điểm muốn trích xuất file PDB (ps) |
-| `--fix-pbc` | Tự động xử lý lỗi xé hộp (Periodic Boundary Conditions) |
+| `-f` | Input trajectory file (`.xtc`) |
+| `-s` | Input run input file (`.tpr`) |
+| `-gro` | Input structure file (`.gro`) |
+
+### 2. Selection & Calculation Parameters
+| Flag | Description |
+| :--- | :--- |
+| `-select` | Molecule selection string (e.g., `"resname GLY PHE"`) |
+| `-cutoff_space` | Cutoff distance for clustering in nm (Default is usually `0.7`) |
+| `-cutoff_cz` | Minimum **number of molecules** required to form a valid cluster |
+| `-n_pep` | Number of residues per molecule (Default: `2`) |
+| `-cutoff_multi` | Multiplier for density search radius (Tang's default = `2.0`) |
+| `-sf` | Provide selections from files |
+| `-selrpos` | Selection reference positions (e.g., `atom`, `res_com`, `mol_com`) |
+| `-seltype` | Default selection output positions |
+| `--fix-pbc` | Automatically fix periodic boundary conditions (PBC whole) |
+| `--gmx-path` | Path to the GROMACS executable (Default: `'gmx'`) |
+| `-b` | START time for analysis in ps |
+| `-e` | END time for analysis in ps (`-1` means read to the end of the file) |
+| `-dt` | Time step in ps (Highly useful for skipping frames to speed up analysis) |
+
+### 3. Statistical Output (`.xvg`)
+| Flag | Description |
+| :--- | :--- |
+| `-nb` | Output the number of valid clusters over time |
+| `-sz` | Output the size of the largest cluster over time |
+| `-dc` | Output Degree of Clustering (DC) |
+| `-ap` | Output Collapse Degree / Aggregation Propensity (AP) |
+| `-fe` | Output Fluctuation Extent of clustering degree (FE) |
+| `-p2` | Output Orientational Order Parameter (P2) |
+| `-k2` | Output K2 Parameter (Relative Shape Anisotropy) |
+| `-pdf` | Output Probability Density Function |
+| `-fes` | Output Free Energy Surface `FES(d,theta) = -RT ln[P(d,theta)]` |
+| `-fes_temp` | Temperature (K) for FES calculation (Default: `300`) |
+| `-comp` | Output co-assembly composition ratio (GF/QW ratio) |
+| `-molnumber` | Output the total number of molecules within all valid clusters |
+| `-liquidity` | Output liquidity factor and fraction of preservation |
+| `-density` | Output the density of aggregated and dispersed phases |
+| `-sasa` | Output Solvent Accessible Surface Area (Automatically selects "Protein" group) |
+
+### 4. PDB Snapshot Output
+| Flag | Description |
+| :--- | :--- |
+| `-pdb` | Output the structure of the largest cluster (`.pdb`) |
+| `-pdb_system` | Output all valid clusters at their original physical coordinates (`.pdb`) |
+| `-pdb_time` | Specific time frame to extract the PDB snapshot (in ps) |
+| `-all_clusters`| Flag to process or extract data for all valid clusters |
 
 ---
 

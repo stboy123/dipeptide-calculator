@@ -1,118 +1,602 @@
+import os
 import subprocess
-import shutil
-import networkx as nx
 import numpy as np
-from MDAnalysis.analysis import distances
+import MDAnalysis as mda
 from scipy.spatial import cKDTree
+from MDAnalysis.lib.distances import capped_distance
 
 class GromacsProcessor:
-    """Chuyên gia điều khiển GROMACS tự động tìm đường dẫn"""
-    
-    def __init__(self, custom_path=None):
-        self.gmx_path = custom_path or shutil.which("gmx")
-        
-        if not self.gmx_path:
-            raise FileNotFoundError("Không tìm thấy GROMACS trên hệ thống. Hãy đảm bảo bạn đã source GMXRC.")
-        else:
-            print(f"[i] Đã tìm thấy GROMACS tại: {self.gmx_path}")
+    def __init__(self, custom_path='gmx'):
+        self.gmx_path = custom_path
 
-    def make_whole(self, s_file, f_file, out_file):
-        """Tự động gọi lệnh trjconv để vá hộp mô phỏng"""
-        print(f"[+] Đang vá lỗi hộp tuần hoàn (PBC) cho {f_file}...")
-        cmd = [self.gmx_path, "trjconv", "-s", s_file, "-f", f_file, "-o", out_file, "-pbc", "whole"]
-        
+    def make_whole(self, tpr_file, xtc_file, output_xtc):
+        print(f"\n[+] Fixing PBC for {xtc_file}...")
+        cmd = f"echo 0 | {self.gmx_path} trjconv -s {tpr_file} -f {xtc_file} -o {output_xtc} -pbc whole"
         try:
-            subprocess.run(cmd, input="0\n", text=True, capture_output=True, check=True)
-            print(f"[*] Đã vá thành công: {out_file}")
-            return True
-        except subprocess.CalledProcessError as e:
-            print(f"[-] Lỗi vá hộp (PBC): {e.stderr}")
+            result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if result.returncode == 0:
+                print(f"[✔] PBC fixed successfully! Output: {output_xtc}")
+                return True
+            else:
+                print(f"[-] Error fixing PBC:\n{result.stderr}")
+                return False
+        except Exception as e:
+            print(f"[-] Subprocess error: {e}")
+            return False
+
+    def calculate_sasa(self, tpr_file, xtc_file, output_xvg, selection="Protein"):
+        print(f"\n[+] Calculating SASA for {xtc_file}...")
+        cmd = f"echo {selection} | {self.gmx_path} sasa -s {tpr_file} -f {xtc_file} -o {output_xvg}"
+        try:
+            result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if result.returncode == 0:
+                print(f"[✔] SASA calculated successfully! Output: {output_xvg}")
+                return True
+            else:
+                print(f"[-] Error calculating SASA:\n{result.stderr}")
+                return False
+        except Exception as e:
+            print(f"[-] Subprocess error: {e}")
             return False
 
 class ClusteringAnalyzer:
-    """Class chuyên xử lý Phân cụm đồ thị"""
-    def __init__(self, cutoff_nm, cutoff_cz):
-        self.cutoff_A = cutoff_nm * 10.0
-        self.cutoff_cz = cutoff_cz
+    def __init__(self, cutoff_space, n_pep):
+        self.cutoff_space = cutoff_space
+        self.n_pep = n_pep
 
-    def calculate(self, peptide_group, num_mols, resindex_to_idx, box_dimensions):
-        dist_matrix = distances.contact_matrix(peptide_group.positions, cutoff=self.cutoff_A, box=box_dimensions)
-        G = nx.Graph()
-        G.add_nodes_from(range(num_mols))
+    def calculate(self, atom_group, num_residues, resindex_to_idx, box_dimensions):
+        positions = atom_group.positions
+        cutoff_A = self.cutoff_space * 10.0
         
-        rows, cols = dist_matrix.nonzero()
-        for r, c in zip(rows, cols):
-            res_i = peptide_group[r].resindex
-            res_j = peptide_group[c].resindex
-            if res_i != res_j:
-                G.add_edge(resindex_to_idx[res_i], resindex_to_idx[res_j])
-
-        all_clusters = list(nx.connected_components(G))
-        valid_clusters = [c for c in all_clusters if len(c) >= self.cutoff_cz]
+        pairs = capped_distance(
+            positions, positions, 
+            max_cutoff=cutoff_A, box=box_dimensions, return_distances=False
+        )
         
-        cluster_this_frame = set()
-        for c in valid_clusters:
-            cluster_this_frame.update(c)
-            
-        return valid_clusters, cluster_this_frame
+        resindices = atom_group.resindices
+        mol_ids = resindices // self.n_pep
+        
+        num_mols = num_residues // self.n_pep
+        adj_list = {i: set() for i in range(num_mols)}
+        
+        if len(pairs) > 0:
+            mol_pairs = mol_ids[pairs]
+            valid_pairs = mol_pairs[mol_pairs[:, 0] != mol_pairs[:, 1]]
+            for p1, p2 in valid_pairs:
+                adj_list[p1].add(p2)
+                adj_list[p2].add(p1)
+                
+        visited = set()
+        clusters = []
+        
+        for i in range(num_mols):
+            if i not in visited:
+                queue = [i]
+                current_cluster = set([i])
+                visited.add(i)
+                
+                while queue:
+                    node = queue.pop(0)
+                    for neighbor in adj_list[node]:
+                        if neighbor not in visited:
+                            visited.add(neighbor)
+                            current_cluster.add(neighbor)
+                            queue.append(neighbor)
+                            
+                cluster_res_indices = []
+                for mol_idx in current_cluster:
+                    for j in range(self.n_pep):
+                        cluster_res_indices.append(mol_idx * self.n_pep + j)
+                clusters.append(cluster_res_indices)
+                
+        return clusters, adj_list
 
 class LiquidityAnalyzer:
-    """Class chuyên tính toán Độ lỏng"""
-    def __init__(self, total_mols):
-        self.total_mols = total_mols
-        self.cluster_last_frame = set()
-
-    def calculate(self, cluster_this_frame):
-        if not self.cluster_last_frame:
-            frac_agg = len(cluster_this_frame) / self.total_mols if self.total_mols > 0 else 0
-            result = [0.0, frac_agg, 0.0, frac_agg]
-        else:
-            intersection = cluster_this_frame.intersection(self.cluster_last_frame)
-            preservation = len(intersection) / len(self.cluster_last_frame) if self.cluster_last_frame else 0
-            growth = (len(cluster_this_frame) - len(intersection)) / self.total_mols
-            shrink = (len(self.cluster_last_frame) - len(intersection)) / self.total_mols
-            fraction_agg = len(cluster_this_frame) / self.total_mols
-            result = [preservation, growth, shrink, fraction_agg]
-            
-        self.cluster_last_frame = cluster_this_frame
-        return result
+    pass
 
 class DensityAnalyzer:
-    """Class chuyên dò lưới 3D để tính Mật độ"""
-    def __init__(self, cutoff_nm, cutoff_multi):
-        self.probe_radius = cutoff_nm * 10.0 * cutoff_multi
+    pass
 
-    def calculate(self, valid_clusters, molecules, peptide_group, box_dimensions):
-        if not valid_clusters:
-            return [0.0, 0.0]
+def write_xvg(filename, title, y_label, time_data, value_data, legends=None, is_liquidity=False):
+    if filename is None: return
+    with open(filename, 'w') as f:
+        f.write('# File generated by Loc\'s Analysis Tool\n')
+        f.write(f'@    title "{title}"\n')
+        f.write(f'@    xaxis  label "Time (ps)"\n')
+        f.write(f'@    yaxis  label "{y_label}"\n')
+        f.write('@TYPE xy\n')
+        
+        if is_liquidity:
+            f.write('@ view 0.15, 0.15, 0.75, 0.85\n')
+            f.write('@ legend on\n')
+            f.write('@ legend box on\n')
+            f.write('@ legend loctype view\n')
+            f.write('@ legend 0.78, 0.8\n')
+            f.write('@ legend length 2\n')
             
-        ag_idx = []
-        for c in valid_clusters:
-            ag_idx.extend(list(c))
+        if legends:
+            for i, leg in enumerate(legends):
+                f.write(f'@ s{i} legend "{leg}"\n')
+                
+        for i in range(len(time_data)):
+            val = value_data[i]
+            line = f"{time_data[i]:10.3f} "
+            if isinstance(val, (list, tuple, np.ndarray)):
+                line += " ".join([f"{v:.7f}" for v in val])
+            else:
+                line += f"{val:12.5f}"
+            f.write(line + "\n")
+    print(f"[*] Successfully written: {filename}")
+
+def sync_masses_from_tpr(u, tpr_file, gmx_path):
+    import re
+    print(f"\n[+] Synchronizing masses from {tpr_file} to ensure 0% error...")
+    masses = []
+    try:
+        cmd = f"{gmx_path} dump -s {tpr_file}"
+        result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        in_atoms = False
+        for line in result.stdout.split('\n'):
+            if 'atom (' in line and '):' in line:
+                in_atoms = True
+            elif in_atoms and line.strip().startswith('type ('):
+                in_atoms = False
+                
+            if in_atoms and 'm=' in line and 'atom[' in line:
+                match = re.search(r'm=\s*([0-9.eE+-]+)', line)
+                if match:
+                    masses.append(float(match.group(1)))
+    except Exception as e:
+        print(f"[-] Error running gmx dump: {e}")
+        
+    if len(masses) == len(u.atoms):
+        for atom, m in zip(u.atoms, masses):
+            atom.mass = m
+        print("[✔] Successfully loaded exact masses from GROMACS. Density will match 100%!")
+    else:
+        print(f"[-] Warning: TPR has {len(masses)} atoms, GRO has {len(u.atoms)} atoms.")
+        print("[i] Falling back to default Martini 2.0 simulation masses...")
+        for atom in u.atoms:
+            if any(atom.name.upper().startswith(prefix) for prefix in ['S', 'R']):
+                atom.mass = 45.0
+            else:
+                atom.mass = 72.0
+
+class OrientationalOrderAnalyzer:
+    def __init__(self, pdb_file):
+        self.pdb_file = pdb_file
+        self.u = mda.Universe(self.pdb_file)
+
+    def calculate_p2(self, atom_name='BB'):
+        res_names_unique = list(dict.fromkeys(self.u.residues.resnames))
+        if len(res_names_unique) >= 2:
+            RESIDUE_N = res_names_unique[0]
+            RESIDUE_C = res_names_unique[1]
+        else:
+            RESIDUE_N = res_names_unique[0]
+            RESIDUE_C = res_names_unique[0]
+        
+        res_N_group = self.u.select_atoms(f"resname {RESIDUE_N}").residues
+        res_C_group = self.u.select_atoms(f"resname {RESIDUE_C}").residues
+        N_mol_p2 = len(res_N_group)
+        
+        if N_mol_p2 == 0 or N_mol_p2 != len(res_C_group):
+            raise ValueError("The number of N-term and C-term residues does not match.")
+
+        all_mu_vectors = []
+        for ts_p2 in self.u.trajectory:
+            for i in range(N_mol_p2):
+                atom_N = res_N_group[i].atoms.select_atoms(f"name {atom_name}")
+                atom_C = res_C_group[i].atoms.select_atoms(f"name {atom_name}")
+                if len(atom_N) >= 1 and len(atom_C) >= 1:
+                    vec_mu = atom_C.positions[0] - atom_N.positions[0]
+                    norm = np.linalg.norm(vec_mu)
+                    if norm > 1e-6:
+                        all_mu_vectors.append(vec_mu / norm)
+                        
+        mu_vectors_array = np.array(all_mu_vectors)
+        N_total = len(mu_vectors_array)
+        
+        if N_total == 0:
+            return None, None, 0.0, 0, RESIDUE_N, RESIDUE_C
             
-        ag_atoms = molecules[ag_idx].atoms
-        disp_atoms = peptide_group - ag_atoms
+        Q_sum = np.zeros((3, 3))
+        I = np.identity(3)
+        for mu in mu_vectors_array:
+            mu_muT = np.outer(mu, mu)
+            Q_sum += 0.5 * (3 * mu_muT - I)
+            
+        Q_matrix = Q_sum / N_total
+        eigenvalues = np.linalg.eigvalsh(Q_matrix)
+        P2_val = np.max(eigenvalues)
+
+        return Q_matrix, eigenvalues, P2_val, N_total, RESIDUE_N, RESIDUE_C
+
+class ShapeAnisotropyAnalyzer:
+    def __init__(self, pdb_file):
+        self.pdb_file = pdb_file
+        self.u = mda.Universe(self.pdb_file)
+
+    def calculate_k2(self):
+        atoms = self.u.atoms
+        if len(atoms) == 0:
+            return None, None, 0.0
+
+        com = atoms.center_of_geometry()
+        positions = atoms.positions - com
+
+        N = len(atoms)
+        S = np.zeros((3, 3))
+        for i in range(3):
+            for j in range(3):
+                S[i, j] = np.sum(positions[:, i] * positions[:, j]) / N
+
+        eigenvalues = np.linalg.eigvalsh(S)
+        l1, l2, l3 = eigenvalues[0], eigenvalues[1], eigenvalues[2]
         
-        ag_mass = ag_atoms.masses.sum()
-        disp_mass = disp_atoms.masses.sum()
+        denominator = (l1 + l2 + l3)**2
+        if denominator < 1e-8:
+            k2 = 0.0
+        else:
+            numerator = l1*l2 + l2*l3 + l3*l1
+            k2 = 1.0 - 3.0 * (numerator / denominator)
+
+        return S, eigenvalues, k2
+
+class PDFAnalyzer:
+    def __init__(self, universe, cutoff_space, n_pep):
+        self.u = universe
+        self.cutoff_space = cutoff_space
+        self.n_pep = n_pep
+
+    def interactive_group_selection(self):
+        options = {
+            "1": ("Whole Protein (All)", "protein"),
+            "2": ("Main Chain (All BB)", "name BB and protein"),
+            "3": ("Side Chain (All SC)", "not name BB and protein"), 
+            "4": ("Water", "resname W")
+        }
         
-        grid_step = 1.0
-        x = np.arange(0, box_dimensions[0], grid_step)
-        y = np.arange(0, box_dimensions[1], grid_step)
-        z = np.arange(0, box_dimensions[2], grid_step)
-        xx, yy, zz = np.meshgrid(x, y, z, indexing='ij')
-        grid_points = np.vstack([xx.ravel(), yy.ravel(), zz.ravel()]).T
+        protein_atoms = self.u.select_atoms("protein")
+        res_name_pairs = list(dict.fromkeys(zip(protein_atoms.resnames, protein_atoms.names)))
         
-        tree = cKDTree(ag_atoms.positions, boxsize=box_dimensions[:3])
-        dists, _ = tree.query(grid_points, k=1, distance_upper_bound=self.probe_radius)
+        idx = 5
+        for res, name in res_name_pairs:
+            desc = f"Bead {name} of Residue {res}"
+            sel_str = f"resname {res} and name {name}"
+            options[str(idx)] = (desc, sel_str)
+            idx += 1
+            
+        print("\n--- SELECT INTERACTION GROUPS FOR ANALYSIS ---")
+        for key, (desc, sel) in options.items():
+            print(f"[{key}] {desc}")
+            
+        def process_input(user_input):
+            parts = user_input.strip().split()
+            if not parts:
+                return None, None
+            if all(p in options for p in parts):
+                if len(parts) == 1:
+                    return options[parts[0]][0], options[parts[0]][1]
+                else:
+                    combined_desc = "Group(" + " + ".join([options[p][0].replace("Bead ", "") for p in parts]) + ")"
+                    combined_sel = " or ".join([f"({options[p][1]})" for p in parts])
+                    return combined_desc, combined_sel
+            else:
+                return "Custom", user_input.strip()
+
+        while True:
+            choice_a = input("Select Group A (Enter number(s), e.g., '7 8 9', or custom selection): ")
+            desc_a, sel_a = process_input(choice_a)
+            if desc_a:
+                sel_a_desc, sel_a_str = desc_a, sel_a
+                break
+            print("Invalid selection. Please try again.")
+
+        while True:
+            choice_b = input("Select Group B (Enter number(s), e.g., '7 8 9', or custom selection): ")
+            desc_b, sel_b = process_input(choice_b)
+            if desc_b:
+                sel_b_desc, sel_b_str = desc_b, sel_b
+                break
+            print("Invalid selection. Please try again.")
+            
+        return sel_a_str, sel_b_str, sel_a_desc, sel_b_desc
+
+    def calculate_metric(self, sel_a_str, sel_b_str, mode='contact', b=0.0, e=-1.0, dt=0.0):
+        from scipy.spatial import cKDTree
         
-        ag_grid_count = np.sum(dists <= self.probe_radius)
-        disp_grid_count = len(grid_points) - ag_grid_count
+        group_a = self.u.select_atoms(sel_a_str)
+        group_b = self.u.select_atoms(sel_b_str)
         
-        ag_volume = ag_grid_count / 1000.0
-        disp_volume = disp_grid_count / 1000.0
+        if len(group_a) == 0 or len(group_b) == 0:
+            print("[-] Error: Selected beads do not exist in this structure!")
+            return None, None
+            
+        num_mols = len(self.u.select_atoms("protein").residues) // self.n_pep
+        if num_mols == 0: num_mols = 1
+            
+        cutoff_A = self.cutoff_space * 10.0
+        times = []
+        metric_values = []
+
+        print(f"\n[+] Scanning trajectory to calculate {'Contact number' if mode == 'contact' else 'Distance'}...")
+        self.u.trajectory.rewind() 
         
-        den_ag = (ag_mass / ag_volume / 0.602) if ag_volume > 0 else 0
-        den_disp = (disp_mass / disp_volume / 0.602) if disp_volume > 0 else 0
+        next_time = b
+        for ts in self.u.trajectory:
+            if ts is None: continue 
+            
+            if ts.time < b - 0.001: continue
+            if e >= 0 and ts.time > e + 0.001: break
+            if dt > 0 and ts.time < next_time - 0.001: continue
+
+            times.append(ts.time)
+            pos_a = group_a.positions
+            pos_b = group_b.positions
+            
+            if mode == 'contact':
+                pairs = capped_distance(pos_a, pos_b, max_cutoff=cutoff_A, box=self.u.dimensions, return_distances=False)
+                if sel_a_str == sel_b_str:
+                    total_contacts = len(pairs) - len(group_a)
+                    total_contacts = max(0, total_contacts // 2)
+                else:
+                    total_contacts = len(pairs)
+                normalized_contacts = total_contacts / num_mols 
+                metric_values.append(normalized_contacts) 
+                
+            elif mode == 'distance':
+                box_dims = self.u.dimensions[:3]
+                pos_a_wrapped = pos_a % box_dims
+                pos_b_wrapped = pos_b % box_dims
+                
+                tree = cKDTree(pos_b_wrapped, boxsize=box_dims)
+                
+                if sel_a_str == sel_b_str:
+                    dists, _ = tree.query(pos_a_wrapped, k=2)
+                    frame_dists = dists[:, 1] / 10.0  
+                else:
+                    dists, _ = tree.query(pos_a_wrapped, k=1)
+                    frame_dists = dists / 10.0  
+                    
+                metric_values.extend(frame_dists) 
+
+            if dt > 0: next_time += dt
+
+        return times, np.array(metric_values)
+
+    def generate_pdf(self, metric_data, pdf_times, output_file, title_desc, mode='contact', x_range_val=None, bw=0.5):
+        from scipy.stats import gaussian_kde
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        if len(metric_data) == 0: return
+
+        print(f"\n[+] Calculating Probability Density (KDE) on {len(metric_data)} data points with Bandwidth = {bw}...")
+        if np.std(metric_data) == 0:
+            metric_data = metric_data + np.random.normal(0, 1e-5, len(metric_data))
+            
+        kde = gaussian_kde(metric_data, bw_method=bw)
+        x_label = "Contact Number" if mode == 'contact' else "Distance (nm)"
         
-        return [den_ag, den_disp]
+        if x_range_val is not None:
+            x_min, x_max = x_range_val[0], x_range_val[1]
+        else:
+            if mode == 'contact':
+                x_min, x_max = np.floor(metric_data.min()) - 0.5, np.ceil(metric_data.max()) + 0.5
+            else:
+                x_min, x_max = max(0, metric_data.min() - 0.2), metric_data.max() + 0.2
+            
+        x_axis = np.linspace(x_min, x_max, 1000)
+        smooth_pdf_values = kde(x_axis)
+        
+        with open(output_file, 'w') as f:
+            f.write(f"# Analysis of {mode.capitalize()} & PDF - {title_desc}\n")
+            f.write(f"# Column 1: {x_label}\n")
+            f.write(f"# Column 2: Probability Density (PDF)\n")
+            f.write(f"@    title \"PDF of {mode.capitalize()}\"\n")
+            f.write(f"@    xaxis  label \"{x_label}\"\n")
+            f.write(f"@    yaxis  label \"PDF\"\n")
+            f.write(f"@TYPE xy\n")
+            for x, y in zip(x_axis, smooth_pdf_values):
+                f.write(f"{x:12.5f} {y:12.6f}\n")
+        print(f"[✔] Exported XVG file (X, Y) for plotting to: {output_file}")
+        
+        while True:
+            ans = input(f"\nDo you want to plot the bell curve (PDF) for {mode} and save the image? (yes/no): ").lower()
+            if ans in ['yes', 'y']:
+                plt.figure(figsize=(8, 6))
+                plt.plot(x_axis, smooth_pdf_values, color='red' if mode=='distance' else 'blue', linewidth=2.5, label=f'PDF (BW={bw})')
+                
+                plt.title(f'PDF of {title_desc}')
+                plt.xlabel(x_label)
+                plt.ylabel('PDF')
+                
+                plt.xlim(x_min, x_max)
+                plt.grid(axis='both', linestyle='--', alpha=0.6)
+                plt.legend()
+                
+                img_file = output_file.replace('.xvg', '.png').replace('.txt', '.png')
+                if not img_file.endswith('.png'): img_file += '.png'
+                plt.savefig(img_file, dpi=300, bbox_inches='tight')
+                print(f"[✔] Saved plot image to: {img_file}")
+                
+                plt.show()
+                break
+            elif ans in ['no', 'n']:
+                print("[i] Skipped image export.")
+                break
+            else:
+                print("Please type 'yes' or 'no'.")
+
+class FESAnalyzer:
+    def __init__(self, universe, cutoff_space, n_pep):
+        self.u = universe
+        self.cutoff_space = cutoff_space
+        self.n_pep = n_pep
+
+    def calculate_fes_trajectory(self, sel_a_str, sel_b_str, b=0.0, e=-1.0, dt=0.0):
+        group_a = self.u.select_atoms(sel_a_str)
+        group_b = self.u.select_atoms(sel_b_str)
+        
+        if len(group_a) == 0 or len(group_b) == 0:
+            print("[-] FES Error: Selected beads do not exist in the structure!")
+            return None, None
+
+        dist_list = []
+        angle_list = []
+
+        print(f"\n[+] Scanning trajectory to collect FES data (Distance, Angle)...")
+        self.u.trajectory.rewind()
+        
+        # Group atoms by molecule/Residue
+        res_a = group_a.residues
+        res_b = group_b.residues
+        box_dims = self.u.dimensions[:3]
+        
+        next_time = b
+        for ts in self.u.trajectory:
+            if ts is None: continue
+            if ts.time < b - 0.001: continue
+            if e >= 0 and ts.time > e + 0.001: break
+            if dt > 0 and ts.time < next_time - 0.001: continue
+
+            cog_a = np.array([r.atoms.select_atoms(sel_a_str).center_of_geometry() for r in res_a])
+            cog_b = np.array([r.atoms.select_atoms(sel_b_str).center_of_geometry() for r in res_b])
+
+            tree = cKDTree(cog_b % box_dims, boxsize=box_dims)
+
+            if sel_a_str == sel_b_str:
+                dists, indices = tree.query(cog_a % box_dims, k=2)
+                valid_dists = dists[:, 1] / 10.0
+                valid_indices = indices[:, 1]
+            else:
+                dists, indices = tree.query(cog_a % box_dims, k=1)
+                valid_dists = dists / 10.0
+                valid_indices = indices
+
+            box_center = box_dims / 2.0
+
+            for i in range(len(res_a)):
+                d = valid_dists[i]
+                if d <= 1.2:
+                    idx_b = valid_indices[i]
+                    
+                    atoms_i = res_a[i].atoms.select_atoms(sel_a_str).positions
+                    atoms_j = res_b[idx_b].atoms.select_atoms(sel_b_str).positions
+                    
+                    def get_orientation_vector(pos):
+                        if len(pos) >= 3:
+                            n = np.cross(pos[1] - pos[0], pos[2] - pos[0])
+                            norm = np.linalg.norm(n)
+                            return n / norm if norm > 1e-6 else np.array([0, 0, 1])
+                        elif len(pos) >= 2:
+                            v = pos[1] - pos[0]
+                            norm = np.linalg.norm(v)
+                            return v / norm if norm > 1e-6 else np.array([0, 0, 1])
+                        else:
+                            v = pos[0] - box_center
+                            norm = np.linalg.norm(v)
+                            return v / norm if norm > 1e-6 else np.array([0, 0, 1])
+
+                    vec_i = get_orientation_vector(atoms_i)
+                    vec_j = get_orientation_vector(atoms_j)
+
+                    cosine_angle = np.dot(vec_i, vec_j)
+                    angle = np.degrees(np.arccos(np.clip(cosine_angle, -1.0, 1.0)))
+                    
+                    if angle > 90:
+                        angle = 180 - angle
+
+                    dist_list.append(d)
+                    angle_list.append(angle)
+
+            if dt > 0: next_time += dt
+
+        return np.array(dist_list), np.array(angle_list)
+
+    def generate_fes(self, d_data, angle_data, output_file, title_desc, T=300):
+        from scipy.stats import gaussian_kde
+        import matplotlib.pyplot as plt
+
+        if len(d_data) == 0:
+            print("[-] No data available to calculate FES.")
+            return
+
+        mask = (d_data <= 0.8)
+        d_filtered = d_data[mask]
+        angle_filtered = angle_data[mask]
+
+        if len(d_filtered) < 10:
+            print("[-] Too few data points satisfying distance <= 0.8 nm to construct FES.")
+            return
+
+        print(f"[+] Calculating 2D Kernel Density Estimation (KDE) on {len(d_filtered)} samples...")
+        values = np.vstack([d_filtered, angle_filtered])
+        
+        # Add minimal noise to prevent singular matrix
+        if np.var(d_filtered) == 0:
+            values[0, :] += np.random.normal(0, 1e-5, len(d_filtered))
+        if np.var(angle_filtered) == 0:
+            values[1, :] += np.random.normal(0, 1e-5, len(angle_filtered))
+            
+        kernel = gaussian_kde(values)
+
+        d_grid, theta_grid = np.mgrid[0.0:0.8:100j, 0.0:90.0:100j]
+        positions = np.vstack([d_grid.ravel(), theta_grid.ravel()])
+        
+        P = np.reshape(kernel(positions).T, d_grid.shape)
+
+        R = 1.987e-3  # kcal/mol.K
+        F = -R * T * np.log(P + 1e-15)  # Prevent log(0) error
+
+        # 1. Shift the global minimum to 0
+        F = F - np.min(F)
+
+        # 2. Author's trick: Cap energy and shift the 0 reference
+        cap_val = 5.0 # Maximum energy level to display (kcal/mol)
+        F = np.clip(F, 0, cap_val) # Energy regions > 5 will be capped at 5
+        F = F - cap_val # Shift the entire plot down by 5 units. Now Max = 0, Min = -5.
+
+        with open(output_file, 'w') as f:
+            f.write(f"# Free Energy Surface (FES) - {title_desc}\n")
+            f.write(f"# Column 1: Distance (nm)\n")
+            f.write(f"# Column 2: Angle (degree)\n")
+            f.write(f"# Column 3: Free Energy (kcal/mol)\n")
+            f.write(f"@    title \"Free Energy Surface\"\n")
+            f.write(f"@    xaxis  label \"Distance (nm)\"\n")
+            f.write(f"@    yaxis  label \"Angle (degree)\"\n")
+            f.write(f"@TYPE xyz\n")
+            
+            for i in range(d_grid.shape[0]):
+                for j in range(d_grid.shape[1]):
+                    f.write(f"{d_grid[i, j]:12.5f} {theta_grid[i, j]:12.5f} {F[i, j]:12.6f}\n")
+                f.write("\n")
+                
+        print(f"[✔] Successfully exported FES matrix file (3 columns) to: {output_file}")
+
+        while True:
+            ans = input("\nDo you want to plot the contour map (FES) and save the image? (yes/no): ").lower()
+            if ans in ['yes', 'y']:
+                plt.figure(figsize=(8, 6))
+                # Add vmin=-5, vmax=0 to lock color scale from -5 (Red) to 0 (Blue) matching the author's plot
+                contour = plt.contourf(d_grid, theta_grid, F, levels=50, cmap='jet_r', vmin=-5, vmax=0)
+                plt.colorbar(contour, label='Free Energy (kcal/mol)')
+
+                plt.xlabel('Distance (nm)')
+                plt.ylabel('Angle (degree)')
+                plt.title(f'Free Energy Landscape: {title_desc}')
+
+                plt.annotate('Parallel', xy=(0.45, 10), color='white', weight='bold')
+                plt.annotate('T-shaped', xy=(0.6, 75), color='white', weight='bold')
+
+                img_file = output_file.replace('.xvg', '.png')
+                plt.savefig(img_file, dpi=300, bbox_inches='tight')
+                print(f"[✔] Saved FES plot image to: {img_file}")
+                plt.show()
+                break
+            elif ans in ['no', 'n']:
+                print("[i] Skipped image export for plot.")
+                break
+            else:
+                print("Please type 'yes' or 'no'.")
