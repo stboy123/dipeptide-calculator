@@ -120,6 +120,48 @@ def main():
         num_mols = num_residues // args.n_pep
         print(f"[i] Topology: {args.n_pep} residues/molecule | Total molecules: {num_mols}")
 
+        # =========================================================
+        # SYSTEM CONCENTRATION & AVERAGE VOLUME CALCULATION
+        # =========================================================
+        print("\n[+] Calculating average system volume over the trajectory...")
+        v_nm3_list = []
+        # Fast iteration to get box dimensions
+        for ts in u.trajectory:
+            box = ts.dimensions[:3]
+            v_nm3_list.append((box[0] / 10.0) * (box[1] / 10.0) * (box[2] / 10.0))
+        
+        # Rewind trajectory for main analysis
+        u.trajectory.rewind()
+        
+        avg_v_nm3 = np.mean(v_nm3_list) if v_nm3_list else 0.0
+        avg_v_ml = avg_v_nm3 * 1e-21
+        
+        total_mass_g_mol = peptide_group.residues.atoms.total_mass()
+        
+        if num_mols > 0:
+            mass_per_mol = total_mass_g_mol / num_mols
+        else:
+            mass_per_mol = 0.0
+            
+        NA = 6.02214076e23
+        mol_count = num_mols / NA
+        mass_g = mol_count * round(mass_per_mol)
+        mass_mg = mass_g * 1000
+        
+        conc_mg_ml = mass_mg / avg_v_ml if avg_v_ml > 0 else 0.0
+
+        print("========================================================")
+        print("                 SYSTEM INFORMATION                     ")
+        print("========================================================")
+        print(f" Molecule Selection   : {args.select}")
+        print(f" Number of Molecules  : {num_mols}")
+        print(f" Mass per Molecule    : {mass_per_mol:.0f} g/mol")
+        print(f" Average Volume (nm^3): {avg_v_nm3:.3f} nm^3")
+        print(f" Average Volume (mL)  : {avg_v_ml:.4e} mL")
+        print("--------------------------------------------------------")
+        print(f" 👉 Average Concentration : {conc_mg_ml:.3f} mg/mL")
+        print("========================================================\n")
+
     except Exception as e:
         print(f"[-] Error loading trajectory: {e}")
         return
@@ -135,7 +177,7 @@ def main():
     prev_contacts = set()
     pdb_extracted = False 
 
-    print("\n[+] Starting trajectory scanning...")
+    print("[+] Starting trajectory scanning...")
     next_time = args.b
     
     for ts in u.trajectory:

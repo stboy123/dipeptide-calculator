@@ -181,7 +181,7 @@ class OrientationalOrderAnalyzer:
         N_mol_p2 = len(res_N_group)
         
         if N_mol_p2 == 0 or N_mol_p2 != len(res_C_group):
-            raise ValueError("The number of N-term and C-term residues does not match.")
+            raise ValueError("Số lượng residue N-term và C-term không khớp.")
 
         all_mu_vectors = []
         for ts_p2 in self.u.trajectory:
@@ -251,10 +251,10 @@ class PDFAnalyzer:
 
     def interactive_group_selection(self):
         options = {
-            "1": ("Whole Protein (All)", "protein"),
-            "2": ("Main Chain (All BB)", "name BB and protein"),
-            "3": ("Side Chain (All SC)", "not name BB and protein"), 
-            "4": ("Water", "resname W")
+            "1": ("Toàn bộ Protein (Tất cả)", "protein"),
+            "2": ("Main Chain (Tất cả BB)", "name BB and protein"),
+            "3": ("Side Chain (Tất cả SC)", "not name BB and protein"), 
+            "4": ("Water (Nước)", "resname W")
         }
         
         protein_atoms = self.u.select_atoms("protein")
@@ -262,12 +262,12 @@ class PDFAnalyzer:
         
         idx = 5
         for res, name in res_name_pairs:
-            desc = f"Bead {name} of Residue {res}"
+            desc = f"Hạt {name} của Residue {res}"
             sel_str = f"resname {res} and name {name}"
             options[str(idx)] = (desc, sel_str)
             idx += 1
             
-        print("\n--- SELECT INTERACTION GROUPS FOR ANALYSIS ---")
+        print("\n--- CHỌN NHÓM TƯƠNG TÁC CHO PHÂN TÍCH ---")
         for key, (desc, sel) in options.items():
             print(f"[{key}] {desc}")
             
@@ -279,27 +279,27 @@ class PDFAnalyzer:
                 if len(parts) == 1:
                     return options[parts[0]][0], options[parts[0]][1]
                 else:
-                    combined_desc = "Group(" + " + ".join([options[p][0].replace("Bead ", "") for p in parts]) + ")"
+                    combined_desc = "Gộp(" + " + ".join([options[p][0].replace("Hạt ", "") for p in parts]) + ")"
                     combined_sel = " or ".join([f"({options[p][1]})" for p in parts])
                     return combined_desc, combined_sel
             else:
                 return "Custom", user_input.strip()
 
         while True:
-            choice_a = input("Select Group A (Enter number(s), e.g., '7 8 9', or custom selection): ")
+            choice_a = input("Chọn nhóm A (Nhập số, CÓ THỂ GÕ NHIỀU SỐ vd '7 8 9') hoặc lệnh custom: ")
             desc_a, sel_a = process_input(choice_a)
             if desc_a:
                 sel_a_desc, sel_a_str = desc_a, sel_a
                 break
-            print("Invalid selection. Please try again.")
+            print("Lựa chọn không hợp lệ. Vui lòng thử lại.")
 
         while True:
-            choice_b = input("Select Group B (Enter number(s), e.g., '7 8 9', or custom selection): ")
+            choice_b = input("Chọn nhóm B (Nhập số, CÓ THỂ GÕ NHIỀU SỐ vd '7 8 9') hoặc lệnh custom: ")
             desc_b, sel_b = process_input(choice_b)
             if desc_b:
                 sel_b_desc, sel_b_str = desc_b, sel_b
                 break
-            print("Invalid selection. Please try again.")
+            print("Lựa chọn không hợp lệ. Vui lòng thử lại.")
             
         return sel_a_str, sel_b_str, sel_a_desc, sel_b_desc
 
@@ -310,7 +310,7 @@ class PDFAnalyzer:
         group_b = self.u.select_atoms(sel_b_str)
         
         if len(group_a) == 0 or len(group_b) == 0:
-            print("[-] Error: Selected beads do not exist in this structure!")
+            print("[-] Lỗi: Lựa chọn hạt không tồn tại trong cấu trúc này!")
             return None, None
             
         num_mols = len(self.u.select_atoms("protein").residues) // self.n_pep
@@ -320,7 +320,7 @@ class PDFAnalyzer:
         times = []
         metric_values = []
 
-        print(f"\n[+] Scanning trajectory to calculate {'Contact number' if mode == 'contact' else 'Distance'}...")
+        print(f"\n[+] Đang quét quỹ đạo để tính toán {'Số lượng tiếp xúc' if mode == 'contact' else 'Khoảng cách'}...")
         self.u.trajectory.rewind() 
         
         next_time = b
@@ -372,7 +372,7 @@ class PDFAnalyzer:
 
         if len(metric_data) == 0: return
 
-        print(f"\n[+] Calculating Probability Density (KDE) on {len(metric_data)} data points with Bandwidth = {bw}...")
+        print(f"\n[+] Đang tính toán Mật độ Xác suất (KDE) trên {len(metric_data)} điểm dữ liệu với Bandwidth = {bw}...")
         if np.std(metric_data) == 0:
             metric_data = metric_data + np.random.normal(0, 1e-5, len(metric_data))
             
@@ -391,24 +391,24 @@ class PDFAnalyzer:
         smooth_pdf_values = kde(x_axis)
         
         with open(output_file, 'w') as f:
-            f.write(f"# Analysis of {mode.capitalize()} & PDF - {title_desc}\n")
-            f.write(f"# Column 1: {x_label}\n")
-            f.write(f"# Column 2: Probability Density (PDF)\n")
+            f.write(f"# Phân tích {mode.capitalize()} & PDF - {title_desc}\n")
+            f.write(f"# Cột 1: {x_label}\n")
+            f.write(f"# Cột 2: Mật độ xác suất (PDF)\n")
             f.write(f"@    title \"PDF of {mode.capitalize()}\"\n")
             f.write(f"@    xaxis  label \"{x_label}\"\n")
             f.write(f"@    yaxis  label \"PDF\"\n")
             f.write(f"@TYPE xy\n")
             for x, y in zip(x_axis, smooth_pdf_values):
                 f.write(f"{x:12.5f} {y:12.6f}\n")
-        print(f"[✔] Exported XVG file (X, Y) for plotting to: {output_file}")
+        print(f"[✔] Đã xuất file XVG (X, Y) để vẽ đồ thị vào: {output_file}")
         
         while True:
-            ans = input(f"\nDo you want to plot the bell curve (PDF) for {mode} and save the image? (yes/no): ").lower()
+            ans = input(f"\nBạn có muốn vẽ đồ thị hình quả chuông (PDF) cho {mode} và lưu ảnh không? (yes/no): ").lower()
             if ans in ['yes', 'y']:
                 plt.figure(figsize=(8, 6))
                 plt.plot(x_axis, smooth_pdf_values, color='red' if mode=='distance' else 'blue', linewidth=2.5, label=f'PDF (BW={bw})')
                 
-                plt.title(f'PDF of {title_desc}')
+                plt.title(f'PDF của {title_desc}')
                 plt.xlabel(x_label)
                 plt.ylabel('PDF')
                 
@@ -419,15 +419,15 @@ class PDFAnalyzer:
                 img_file = output_file.replace('.xvg', '.png').replace('.txt', '.png')
                 if not img_file.endswith('.png'): img_file += '.png'
                 plt.savefig(img_file, dpi=300, bbox_inches='tight')
-                print(f"[✔] Saved plot image to: {img_file}")
+                print(f"[✔] Đã lưu hình ảnh đồ thị ra: {img_file}")
                 
                 plt.show()
                 break
             elif ans in ['no', 'n']:
-                print("[i] Skipped image export.")
+                print("[i] Đã bỏ qua bước xuất ảnh.")
                 break
             else:
-                print("Please type 'yes' or 'no'.")
+                print("Vui lòng gõ 'yes' hoặc 'no'.")
 
 class FESAnalyzer:
     def __init__(self, universe, cutoff_space, n_pep):
@@ -440,16 +440,16 @@ class FESAnalyzer:
         group_b = self.u.select_atoms(sel_b_str)
         
         if len(group_a) == 0 or len(group_b) == 0:
-            print("[-] FES Error: Selected beads do not exist in the structure!")
+            print("[-] Lỗi FES: Lựa chọn hạt không tồn tại trong cấu trúc!")
             return None, None
 
         dist_list = []
         angle_list = []
 
-        print(f"\n[+] Scanning trajectory to collect FES data (Distance, Angle)...")
+        print(f"\n[+] Đang quét quỹ đạo để thu thập dữ liệu FES (Distance, Angle)...")
         self.u.trajectory.rewind()
         
-        # Group atoms by molecule/Residue
+        # Nhóm nguyên tử theo từng phân tử/Residue
         res_a = group_a.residues
         res_b = group_b.residues
         box_dims = self.u.dimensions[:3]
@@ -520,7 +520,7 @@ class FESAnalyzer:
         import matplotlib.pyplot as plt
 
         if len(d_data) == 0:
-            print("[-] No data available to calculate FES.")
+            print("[-] Không có dữ liệu để tính FES.")
             return
 
         mask = (d_data <= 0.8)
@@ -528,13 +528,13 @@ class FESAnalyzer:
         angle_filtered = angle_data[mask]
 
         if len(d_filtered) < 10:
-            print("[-] Too few data points satisfying distance <= 0.8 nm to construct FES.")
+            print("[-] Quá ít điểm dữ liệu thỏa mãn khoảng cách <= 0.8 nm để dựng FES.")
             return
 
-        print(f"[+] Calculating 2D Kernel Density Estimation (KDE) on {len(d_filtered)} samples...")
+        print(f"[+] Đang tính toán Kernel Density Estimation (KDE) 2D trên {len(d_filtered)} mẫu...")
         values = np.vstack([d_filtered, angle_filtered])
         
-        # Add minimal noise to prevent singular matrix
+        # Thêm độ nhiễu cực nhỏ
         if np.var(d_filtered) == 0:
             values[0, :] += np.random.normal(0, 1e-5, len(d_filtered))
         if np.var(angle_filtered) == 0:
@@ -548,21 +548,21 @@ class FESAnalyzer:
         P = np.reshape(kernel(positions).T, d_grid.shape)
 
         R = 1.987e-3  # kcal/mol.K
-        F = -R * T * np.log(P + 1e-15)  # Prevent log(0) error
+        F = -R * T * np.log(P + 1e-15)  # Tránh lỗi log(0)
 
-        # 1. Shift the global minimum to 0
+        # 1. Đưa hố năng lượng thấp nhất về 0
         F = F - np.min(F)
 
-        # 2. Author's trick: Cap energy and shift the 0 reference
-        cap_val = 5.0 # Maximum energy level to display (kcal/mol)
-        F = np.clip(F, 0, cap_val) # Energy regions > 5 will be capped at 5
-        F = F - cap_val # Shift the entire plot down by 5 units. Now Max = 0, Min = -5.
+        # 2. Thủ thuật của tác giả: Cắt trần năng lượng và dịch chuyển mốc 0
+        cap_val = 5.0 # Mức năng lượng tối đa muốn hiển thị (kcal/mol)
+        F = np.clip(F, 0, cap_val) # Các vùng năng lượng > 5 sẽ bị gọt bằng 5
+        F = F - cap_val # Dịch toàn bộ đồ thị xuống 5 đơn vị. Lúc này Max = 0, Min = -5.
 
         with open(output_file, 'w') as f:
             f.write(f"# Free Energy Surface (FES) - {title_desc}\n")
-            f.write(f"# Column 1: Distance (nm)\n")
-            f.write(f"# Column 2: Angle (degree)\n")
-            f.write(f"# Column 3: Free Energy (kcal/mol)\n")
+            f.write(f"# Cột 1: Distance (nm)\n")
+            f.write(f"# Cột 2: Angle (degree)\n")
+            f.write(f"# Cột 3: Free Energy (kcal/mol)\n")
             f.write(f"@    title \"Free Energy Surface\"\n")
             f.write(f"@    xaxis  label \"Distance (nm)\"\n")
             f.write(f"@    yaxis  label \"Angle (degree)\"\n")
@@ -573,13 +573,13 @@ class FESAnalyzer:
                     f.write(f"{d_grid[i, j]:12.5f} {theta_grid[i, j]:12.5f} {F[i, j]:12.6f}\n")
                 f.write("\n")
                 
-        print(f"[✔] Successfully exported FES matrix file (3 columns) to: {output_file}")
+        print(f"[✔] Đã xuất thành công file ma trận FES (3 cột) vào: {output_file}")
 
         while True:
-            ans = input("\nDo you want to plot the contour map (FES) and save the image? (yes/no): ").lower()
+            ans = input("\nBạn có muốn vẽ bản đồ đường đồng mức Contourf (FES) và lưu ảnh không? (yes/no): ").lower()
             if ans in ['yes', 'y']:
                 plt.figure(figsize=(8, 6))
-                # Add vmin=-5, vmax=0 to lock color scale from -5 (Red) to 0 (Blue) matching the author's plot
+                # Thêm vmin=-5, vmax=0 để khóa thang màu từ -5 (Đỏ) đến 0 (Xanh) giống hệt tác giả
                 contour = plt.contourf(d_grid, theta_grid, F, levels=50, cmap='jet_r', vmin=-5, vmax=0)
                 plt.colorbar(contour, label='Free Energy (kcal/mol)')
 
@@ -592,11 +592,11 @@ class FESAnalyzer:
 
                 img_file = output_file.replace('.xvg', '.png')
                 plt.savefig(img_file, dpi=300, bbox_inches='tight')
-                print(f"[✔] Saved FES plot image to: {img_file}")
+                print(f"[✔] Đã lưu hình ảnh FES đồ thị ra: {img_file}")
                 plt.show()
                 break
             elif ans in ['no', 'n']:
-                print("[i] Skipped image export for plot.")
+                print("[i] Đã bỏ qua bước xuất đồ thị dạng ảnh.")
                 break
             else:
-                print("Please type 'yes' or 'no'.")
+                print("Vui lòng gõ 'yes' hoặc 'no'.")
