@@ -143,6 +143,58 @@ class GromacsProcessor:
         except Exception as e:
             return False
 
+    def process_ap_from_sasa(self, tpr_file, xtc_file, selection="Protein"):
+        """
+        NEW FEATURE: Runs SASA, reads the output, calculates AP (SASA_0 / SASA_t),
+        and returns the times and AP values. Does not interfere with other files.
+        """
+        temp_sasa_xvg = "temp_sasa_for_ap_calculation.xvg"
+        print(f"\n[+] Running background SASA to compute Aggregation Propensity (AP)...")
+        cmd = f"echo {selection} | {self.gmx_path} sasa -s {tpr_file} -f {xtc_file} -o {temp_sasa_xvg}"
+        
+        try:
+            result = subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if result.returncode != 0 or not os.path.exists(temp_sasa_xvg):
+                print("[-] Failed to calculate SASA for AP calculation.")
+                return None
+        except Exception as e:
+            print(f"[-] Exception while running SASA for AP: {e}")
+            return None
+
+        # Parse the temporary SASA file
+        times = []
+        sasa_values = []
+        with open(temp_sasa_xvg, 'r') as f:
+            for line in f:
+                if line.startswith(('@', '#')): 
+                    continue
+                parts = line.split()
+                if len(parts) >= 2:
+                    times.append(float(parts[0]))
+                    sasa_values.append(float(parts[1]))
+
+        if not sasa_values:
+            print("[-] No valid SASA data extracted.")
+            return None
+
+        # Calculate AP: SASA_initial / SASA_current
+        sasa_0 = sasa_values[0]
+        ap_values = []
+        for s in sasa_values:
+            if s > 0:
+                ap_values.append(sasa_0 / s)
+            else:
+                ap_values.append(1.0) # Prevent division by zero fallback
+
+        # Clean up temporary file
+        try:
+            os.remove(temp_sasa_xvg)
+        except OSError:
+            pass
+
+        return times, ap_values
+
+
 class ClusteringAnalyzer:
     def __init__(self, cutoff_space, n_pep):
         self.cutoff_space = cutoff_space

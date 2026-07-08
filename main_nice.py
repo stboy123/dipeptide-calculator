@@ -58,7 +58,7 @@ def parse_arguments():
     group_stats.add_argument('-nb', type=str, default=None, help='Output number of valid clusters over time')
     group_stats.add_argument('-sz', type=str, default=None, help='Output size of the largest cluster over time')
     group_stats.add_argument('-dc', type=str, default=None, help='Output Degree of Clustering (DC)')
-    group_stats.add_argument('-ap', type=str, default=None, help='Output Collapse Degree / Aggregation Propensity (AP)')
+    group_stats.add_argument('-ap', type=str, default=None, help='Output Collapse Degree / Aggregation Propensity (AP calculated by SASA ratio)')
     group_stats.add_argument('-fe', type=str, default=None, help='Output Fluctuation Extent of clustering degree (FE)')
     group_stats.add_argument('-p2', type=str, default=None, help='Output Orientational Order Parameter (P2)')
     group_stats.add_argument('-k2', type=str, default=None, help='Output K2 Parameter (Relative Shape Anisotropy)')
@@ -169,14 +169,18 @@ def main():
     pdf_analyzer = PDFAnalyzer(u, args.cutoff_space, args.n_pep)
     fes_analyzer = FESAnalyzer(u, args.cutoff_space, args.n_pep) if args.fes else None
     
-    times, cluster_counts, max_sizes, dc_data, ap_data = [], [], [], [], []
+    times, cluster_counts, max_sizes, dc_data = [], [], [], []
     comp_data, molnumber_data, liquidity_data, density_data = [], [], [], []
     
     prev_cluster = set()
     prev_contacts = set()
     pdb_extracted = False 
 
-    need_main_loop = any([args.nb, args.sz, args.dc, args.ap, args.fe, args.p2, args.k2, args.comp, args.molnumber, args.liquidity, args.density, args.pdb, args.pdb_system])
+    # NOTE: args.ap has been removed from need_mols and need_qualified 
+    # to completely isolate it from the clustering engine.
+    need_mols = any([args.sz, args.dc, args.fe, args.nb, args.molnumber, args.comp, args.liquidity, args.density, args.pdb, args.pdb_system])
+    need_qualified = any([args.nb, args.molnumber, args.comp, args.liquidity, args.pdb, args.pdb_system])
+    need_main_loop = need_mols or need_qualified or args.p2 or args.k2
 
     if need_main_loop:
         print("[+] Starting trajectory scanning for clustering/statistical analysis...")
@@ -192,14 +196,12 @@ def main():
             # CORE CALCULATION
             all_clusters, _ = cluster_calc.calculate(peptide_group, num_residues, resindex_to_idx, u.dimensions)
             
-            need_mols = any([args.sz, args.dc, args.fe, args.nb, args.molnumber, args.comp, args.ap, args.liquidity, args.density, args.pdb, args.pdb_system])
             if need_mols:
                 all_clusters_mols = []
                 for c in all_clusters:
                     mols = set(res_idx // args.n_pep for res_idx in c)
                     all_clusters_mols.append(mols)
 
-            need_qualified = any([args.nb, args.molnumber, args.comp, args.ap, args.liquidity, args.pdb, args.pdb_system])
             if need_qualified:
                 qualified_clusters_mols = [mols for mols in all_clusters_mols if len(mols) >= args.cutoff_cz]
                 
@@ -207,9 +209,6 @@ def main():
                     cluster_counts.append(len(qualified_clusters_mols))
                 if args.molnumber:
                     molnumber_data.append(sum(len(mols) for mols in qualified_clusters_mols))
-                if args.ap:
-                    total_mols_in_clusters = sum(len(mols) for mols in qualified_clusters_mols)
-                    ap_data.append(total_mols_in_clusters / num_mols if num_mols > 0 else 0.0)
                     
                 if args.comp:
                     if qualified_clusters_mols:
@@ -364,7 +363,6 @@ def main():
         if args.nb: write_xvg(args.nb, "Number of Clusters", "Count", times, cluster_counts)
         if args.sz: write_xvg(args.sz, "Size of Largest Cluster", "Molecules", times, max_sizes)
         if args.dc: write_xvg(args.dc, "Degree of Clustering (DC)", "DC", times, dc_data)
-        if args.ap: write_xvg(args.ap, "Collapse Degree / Aggregation Propensity (AP)", "AP", times, ap_data)
         if args.molnumber: write_xvg(args.molnumber, "Total Molecules in Clusters", "Molecules", times, molnumber_data)
         if args.comp: write_xvg(args.comp, "Cluster Composition", "Value", times, comp_data, ["GF_Count", "QW_Count", "GF_Percent", "QW_Percent"])
         if args.liquidity:
@@ -402,8 +400,21 @@ def main():
                             f.write(f"# Relative Shape Anisotropy (K2) = {k2_val:.4f}\n")
                 except Exception as e: print(f"[-] Error during K2 analysis: {e}")
 
+    # =========================================================
+    # INDEPENDENT SASA ANALYSIS (Original)
+    # =========================================================
     if hasattr(args, 'sasa') and args.sasa:
         GromacsProcessor(custom_path=args.gmx_path).calculate_sasa(args.s, final_xtc, args.sasa, selection="Protein")
+
+    # =========================================================
+    # NEW AP ANALYSIS (Calculated via SASA background execution)
+    # =========================================================
+    if hasattr(args, 'ap') and args.ap:
+        gmx_proc = GromacsProcessor(custom_path=args.gmx_path)
+        ap_result = gmx_proc.process_ap_from_sasa(args.s, final_xtc, selection="Protein")
+        if ap_result:
+            ap_times, ap_values = ap_result
+            write_xvg(args.ap, "Aggregation Propensity (AP)", "AP = SASA_initial / SASA_t", ap_times, ap_values)
 
     # =========================================================
     # 11. CALCULATE PDF OF METRICS
