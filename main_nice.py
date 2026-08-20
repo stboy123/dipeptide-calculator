@@ -47,7 +47,7 @@ def parse_arguments():
     group_params.add_argument('-sf', type=str, default=None, help='Provide selections from files')
     group_params.add_argument('-selrpos', type=str, default='atom', help='Selection reference positions (atom, res_com, mol_com, etc.)')
     group_params.add_argument('-seltype', type=str, default='atom', help='Default selection output positions')
-    group_params.add_argument('--fix-pbc', action='store_true', help='Automatically fix periodic boundary conditions (PBC whole)')
+    group_params.add_argument('--fix-pbc', action='store_true', help="Automatically fix PBC. Prompts at runtime to keep file (yes = keep, no/blank = delete)")
     group_params.add_argument('--gmx-path', type=str, default='gmx', help="Path to the GROMACS executable (Default: 'gmx')")
     
     group_params.add_argument('-b', type=float, default=0.0, help='START time for analysis (ps)')
@@ -96,10 +96,15 @@ def main():
 
     if args.fix_pbc:
         gmx = GromacsProcessor(custom_path=args.gmx_path)
-        temp_xtc = "tmp_whole_trajectory.xtc"
+        temp_xtc = "fixed_pbc_trajectory.xtc"
         if gmx.make_whole(args.s, args.f, temp_xtc):
             final_xtc = temp_xtc
-            temp_files.append(temp_xtc)
+            ans = input(f"\n[?] Do you want to keep the fixed PBC trajectory file '{temp_xtc}'?\n    (yes = keep / no = delete / leave blank = delete): ").strip().lower()
+            if ans in ['yes', 'y']:
+                print(f"[i] The file '{temp_xtc}' will be kept.")
+            else:
+                print(f"[i] The file '{temp_xtc}' will be deleted after analysis to save space.")
+                temp_files.append(temp_xtc)
         else:
             return
 
@@ -176,8 +181,6 @@ def main():
     prev_contacts = set()
     pdb_extracted = False 
 
-    # NOTE: args.ap has been removed from need_mols and need_qualified 
-    # to completely isolate it from the clustering engine.
     need_mols = any([args.sz, args.dc, args.fe, args.nb, args.molnumber, args.comp, args.liquidity, args.density, args.pdb, args.pdb_system])
     need_qualified = any([args.nb, args.molnumber, args.comp, args.liquidity, args.pdb, args.pdb_system])
     need_main_loop = need_mols or need_qualified or args.p2 or args.k2
@@ -302,7 +305,7 @@ def main():
                     
                     if len(aggr_atoms) > 0:
                         tree_aggr = cKDTree(aggr_atoms.positions % box_dims, boxsize=box_dims)
-                        distances_aggr, _ = tree_aggr.query(grid_points, k=1, distance_upper_bound=radius_multi_A)
+                        distances_aggr, _ = tree_aggr.query(grid_points, k=1, distance_upper_bound=radius_multi_A, workers=-1)
                         num_aggr_points = np.sum(distances_aggr <= radius_multi_A)
                     else:
                         num_aggr_points = 0
