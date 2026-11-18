@@ -148,6 +148,18 @@ class GromacsProcessor:
         NEW FEATURE: Runs SASA, reads the output, calculates AP (SASA_0 / SASA_t),
         and returns the times and AP values. Does not interfere with other files.
         """
+        # 1. Tự động sinh file vdwradii.dat chuẩn của Martini 3 trước khi chạy
+        martini_radii = (
+            "; Hat Normal (4 nguyen tu nang) - ban kinh ~0.24 nm\n"
+            "BB   0.24\nQ1   0.24\nQ2   0.24\nQ3   0.24\nQ4   0.24\nQ5   0.24\nQa   0.24\nQd   0.24\n"
+            "; Hat Small (3 nguyen tu nang) - ban kinh ~0.21 nm\n"
+            "SC1  0.21\nSC2  0.21\nSC3  0.21\nSC4  0.21\nSC5  0.21\n"
+            "; Hat Tiny (2 nguyen tu nang) - ban kinh 0.17 nm\n"
+            "TC1  0.17\nTC2  0.17\nTC3  0.17\nTC4  0.17\nTC5  0.17\n"
+        )
+        with open("vdwradii.dat", "w") as f:
+            f.write(martini_radii)
+
         temp_sasa_xvg = "temp_sasa_for_ap_calculation.xvg"
         print(f"\n[+] Running background SASA to compute Aggregation Propensity (AP)...")
         cmd = f"echo {selection} | {self.gmx_path} sasa -s {tpr_file} -f {xtc_file} -o {temp_sasa_xvg}"
@@ -156,9 +168,12 @@ class GromacsProcessor:
             result = subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             if result.returncode != 0 or not os.path.exists(temp_sasa_xvg):
                 print("[-] Failed to calculate SASA for AP calculation.")
+                # Dọn dẹp file vdwradii nếu có lỗi
+                if os.path.exists("vdwradii.dat"): os.remove("vdwradii.dat")
                 return None
         except Exception as e:
             print(f"[-] Exception while running SASA for AP: {e}")
+            if os.path.exists("vdwradii.dat"): os.remove("vdwradii.dat")
             return None
 
         # Parse the temporary SASA file
@@ -175,6 +190,7 @@ class GromacsProcessor:
 
         if not sasa_values:
             print("[-] No valid SASA data extracted.")
+            if os.path.exists("vdwradii.dat"): os.remove("vdwradii.dat")
             return None
 
         # Calculate AP: SASA_initial / SASA_current
@@ -186,9 +202,10 @@ class GromacsProcessor:
             else:
                 ap_values.append(1.0) # Prevent division by zero fallback
 
-        # Clean up temporary file
+        # 2. Xóa các file tạm sau khi tính xong để trả lại môi trường sạch
         try:
             os.remove(temp_sasa_xvg)
+            os.remove("vdwradii.dat")
         except OSError:
             pass
 
@@ -444,7 +461,7 @@ class PDFAnalyzer:
             "1": ("Whole Protein (All)", "protein"),
             "2": ("Main Chain (All BB)", "name BB and protein"),
             "3": ("Side Chain (All SC)", "not name BB and protein"), 
-            "4": ("Water", "resname W")
+            "4": ("Water", "name W SW TW SOL HOH")  
         }
         protein_atoms = self.u.select_atoms("protein")
         res_name_pairs = list(dict.fromkeys(zip(protein_atoms.resnames, protein_atoms.names)))
