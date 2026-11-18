@@ -717,55 +717,51 @@ class FESAnalyzer:
         return np.array(dist_list), np.array(angle_list)
 
     def generate_fes(self, d_data, angle_data, output_file, title_desc, T=300):
-        from scipy.stats import gaussian_kde
         import matplotlib.pyplot as plt
+        import numpy as np
 
-        if len(d_data) == 0:
-            print("[-] No data available to calculate FES.")
+        if len(d_data) < 10:
+            print("[-] Quá ít điểm dữ liệu (<10) để xây dựng Cảnh quan năng lượng.")
             return
 
-        is_pipi = False
-        if len(angle_data) > 0 and np.max(angle_data) <= 90.5:
-            is_pipi = True
-            
-        min_d = 0.0 
-        max_d = 0.8 if is_pipi else 1.2
+        is_pipi = True if np.max(angle_data) <= 90.5 else False
+        min_d, max_d = 0.3, 1.2
         max_angle = 90.0 if is_pipi else 180.0
-        cap_val = 5.0 if is_pipi else 6.0
-        vmin_val = -5 if is_pipi else -6
 
-        mask = (d_data >= min_d) & (d_data <= max_d)
-        d_filtered = d_data[mask]
-        angle_filtered = angle_data[mask]
+        print(f"[+] Đang tính toán PMF (Potential of Mean Force) chuẩn nhiệt động học cho {len(d_data)} cặp tương tác...")
 
-        if len(d_filtered) < 10:
-            print(f"[-] Too few data points satisfying distance <= {max_d} nm to construct FES.")
-            return
-
-        print(f"[+] Calculating 2D KDE on {len(d_filtered)} samples (Mode: {'Pi-Pi' if is_pipi else 'Mainchain Inter-molecular'})...")
-        values = np.vstack([d_filtered, angle_filtered])
+        # 1. SỬ DỤNG 2D HISTOGRAM (Phản ánh Tần suất tuyệt đối, không chuẩn hóa ngầm kiểu KDE)
+        bins_d = 60
+        bins_a = 60
+        H, d_edges, a_edges = np.histogram2d(d_data, angle_data, 
+                                             bins=[bins_d, bins_a], 
+                                             range=[[min_d, max_d], [0, max_angle]])
         
-        if np.var(d_filtered) == 0:
-            values[0, :] += np.random.normal(0, 1e-5, len(d_filtered))
-        if np.var(angle_filtered) == 0:
-            values[1, :] += np.random.normal(0, 1e-5, len(angle_filtered))
-            
-        kernel = gaussian_kde(values)
+        # Ngăn lỗi chia cho 0 hoặc log(0)
+        H = np.where(H == 0, 1e-10, H)
 
-        d_grid, theta_grid = np.mgrid[min_d:max_d:100j, 0.0:max_angle:100j]
-        positions = np.vstack([d_grid.ravel(), theta_grid.ravel()])
-        
-        P = np.reshape(kernel(positions).T, d_grid.shape)
+        # 2. THIẾT LẬP TRẠNG THÁI THAM CHIẾU (Unbound / Bulk State = 0 kcal/mol)
+        # Tính tần suất trung bình khi các hạt ở xa nhau (d >= 1.0 nm)
+        idx_ref = np.where(d_edges >= 1.0)[0][:-1]
+        if len(idx_ref) > 0:
+            H_ref = np.mean(H[idx_ref, :])
+        else:
+            H_ref = 1.0
+        H_ref = max(H_ref, 1e-5) # Đảm bảo tham chiếu không quá nhỏ
 
-        R = 1.987e-3  
-        F = -R * T * np.log(P + 1e-15)  
+        # 3. TÍNH NĂNG LƯỢNG TỰ DO (PMF) theo chuẩn Boltzmann: Delta G = -RT ln(P / P_bulk)
+        R = 1.987e-3  # kcal/(mol.K)
+        F = -R * T * np.log(H / H_ref)
 
-        F = F - np.min(F)
-        F = np.clip(F, 0, cap_val) 
-        F = F - cap_val 
+        # Tạo lưới tọa độ tâm cho các bin để vẽ
+        d_centers = (d_edges[:-1] + d_edges[1:]) / 2
+        a_centers = (a_edges[:-1] + a_edges[1:]) / 2
+        D_grid, A_grid = np.meshgrid(d_centers, a_centers, indexing='ij')
 
+        # Ghi file .xvg
         with open(output_file, 'w') as f:
-            f.write(f"# Free Energy Surface (FES) - {title_desc}\n")
+            f.write(f"# Free Energy Surface (PMF) - {title_desc}\n")
+            f.write(f"# Cấu hình: Bulk Reference (d>=1.0 nm) = 0 kcal/mol\n")
             f.write(f"# Column 1: Distance (nm)\n")
             f.write(f"# Column 2: Angle (degree)\n")
             f.write(f"# Column 3: Free Energy (kcal/mol)\n")
@@ -773,38 +769,53 @@ class FESAnalyzer:
             f.write(f"@    xaxis  label \"Distance (nm)\"\n")
             f.write(f"@    yaxis  label \"Angle (degree)\"\n")
             f.write(f"@TYPE xyz\n")
-            
-            for i in range(d_grid.shape[0]):
-                for j in range(d_grid.shape[1]):
-                    f.write(f"{d_grid[i, j]:12.5f} {theta_grid[i, j]:12.5f} {F[i, j]:12.6f}\n")
+            for i in range(D_grid.shape[0]):
+                for j in range(D_grid.shape[1]):
+                    f.write(f"{D_grid[i, j]:12.5f} {A_grid[i, j]:12.5f} {F[i, j]:12.6f}\n")
                 f.write("\n")
                 
-        print(f"[✔] Successfully exported FES matrix file (3 columns) to: {output_file}")
+        print(f"[✔] Đã xuất ma trận FES chuẩn ra file: {output_file}")
 
         while True:
-            ans = input("\nDo you want to plot the Contourf map (FES) and save the image? (yes/no): ").lower()
+            ans = input("\nBạn có muốn vẽ và lưu bản đồ Contourf (FES) không? (yes/no): ").lower()
             if ans in ['yes', 'y']:
-                plt.figure(figsize=(8, 6))
+                # THIẾT LẬP ĐỒ HỌA CHUẨN BÀI BÁO (Publication Quality)
+                plt.rcParams["font.family"] = "sans-serif"
+                plt.rcParams["font.sans-serif"] = ["Arial"]
+                fig, ax = plt.subplots(figsize=(8, 6))
                 
-                contour = plt.contourf(d_grid, theta_grid, F, levels=60, cmap='jet_r', vmin=vmin_val, vmax=0)
-                plt.colorbar(contour, label='Free Energy (kcal/mol)')
+                # Cố định thang màu từ -5 đến 1.5 để dễ dàng so sánh giữa các hệ hộp hoặc nồng độ khác nhau
+                vmin_val = -5.0
+                vmax_val = 1.5
+                
+                # Giới hạn giá trị F để đồ thị không bị nhiễu màu
+                F_plot = np.clip(F, vmin_val, vmax_val)
 
-                plt.xlabel('Distance (nm)')
-                plt.ylabel('Angle (degree)')
-                plt.title(f'Free Energy Landscape: {title_desc}')
-                plt.xlim(min_d, max_d) 
+                contour = ax.contourf(D_grid, A_grid, F_plot, levels=60, cmap='jet_r', 
+                                      vmin=vmin_val, vmax=vmax_val, extend='both')
+                
+                cbar = plt.colorbar(contour, ax=ax)
+                cbar.set_label('Free Energy (kcal/mol)', fontsize=14, fontweight='bold', labelpad=10)
+                cbar.ax.tick_params(labelsize=12)
+
+                ax.set_xlabel('Distance (nm)', fontsize=14, fontweight='bold')
+                ax.set_ylabel('Angle (degree)', fontsize=14, fontweight='bold')
+                ax.set_title(f'Free Energy Landscape: {title_desc}', fontsize=16, pad=15)
+                ax.set_xlim(min_d, max_d) 
+                ax.tick_params(axis='both', which='major', labelsize=12, width=1.5, length=5)
+                for spine in ax.spines.values(): spine.set_linewidth(1.5)
 
                 if is_pipi:
-                    plt.annotate('Parallel', xy=(0.45, 10), color='white', weight='bold')
-                    plt.annotate('T-shaped', xy=(0.6, 75), color='white', weight='bold')
+                    ax.text(0.45, 10, 'Parallel', color='white', weight='bold', fontsize=12, ha='center')
+                    ax.text(0.60, 75, 'T-shaped', color='white', weight='bold', fontsize=12, ha='center')
 
+                plt.tight_layout()
                 img_file = output_file.replace('.xvg', '.png')
-                plt.savefig(img_file, dpi=300, bbox_inches='tight')
-                print(f"[✔] Saved FES plot image to: {img_file}")
+                plt.savefig(img_file, dpi=300)
+                print(f"[✔] Đã lưu ảnh FES chuẩn: {img_file}")
                 plt.show()
                 break
             elif ans in ['no', 'n']:
-                print("[i] Skipped image plot export step.")
                 break
             else:
-                print("Please type 'yes' or 'no'.")
+                print("Vui lòng nhập 'yes' hoặc 'no'.")
