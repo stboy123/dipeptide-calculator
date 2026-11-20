@@ -461,7 +461,7 @@ class PDFAnalyzer:
             "1": ("Whole Protein (All)", "protein"),
             "2": ("Main Chain (All BB)", "name BB and protein"),
             "3": ("Side Chain (All SC)", "not name BB and protein"), 
-            "4": ("Water", "name W SW TW SOL HOH")  
+            "4": ("Water", "resname W")
         }
         protein_atoms = self.u.select_atoms("protein")
         res_name_pairs = list(dict.fromkeys(zip(protein_atoms.resnames, protein_atoms.names)))

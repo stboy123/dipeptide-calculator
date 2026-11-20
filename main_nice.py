@@ -326,9 +326,37 @@ def main():
                             agg_res_indices_largest.append(m * args.n_pep + i)
                     largest_cluster_atoms = residues[agg_res_indices_largest].atoms
                     box_dims = u.dimensions[:3]
-                    cluster_com = largest_cluster_atoms.center_of_geometry(pbc=True)
+                    # 1. Áp dụng Thuật toán Max-Gap: Tìm khoảng trống lớn nhất dọc theo từng trục tọa độ
+                    pos = largest_cluster_atoms.positions % box_dims
+                    shifts = np.zeros(3)
+
+                    for idx in range(3):
+                        L = box_dims[idx]
+                        coords = np.sort(pos[:, idx])
+                        
+                        # Tính khoảng cách giữa các hạt liền kề, bao gồm cả khoảng cắt ngang qua rìa (PBC wrap gap)
+                        gaps = np.append(np.diff(coords), coords[0] + L - coords[-1])
+                        
+                        # Vị trí cắt ngay trước khoảng trống lớn nhất
+                        split_point = coords[np.argmax(gaps)]
+                        
+                        # Tính khoảng dời cần thiết để đẩy "khoảng trống" ra rìa hộp
+                        shifts[idx] = L - split_point - 0.001
+
+                    # 2. Dịch chuyển toàn bộ hệ thống để đảm bảo cụm phân tử được nối liền mạch
+                    u.atoms.positions = (u.atoms.positions + shifts) % box_dims
+
+                    # Cập nhật lại tọa độ mới sau khi dời
+                    largest_cluster_atoms = residues[agg_res_indices_largest].atoms
+
+                    # 3. Tính toán Khối tâm (COG) tĩnh không cần PBC và căn cụm chính xác vào tâm hộp
+                    cluster_com = largest_cluster_atoms.center_of_geometry(pbc=False)
                     u.atoms.translate((box_dims / 2.0) - cluster_com)
+                    
+                    # 4. Gói hệ thống lại vào trong hộp mô phỏng
                     u.atoms.positions = u.atoms.positions % box_dims
+                    
+                
                     
                     valid_clusters_atoms = None
                     if qualified_clusters_mols:
